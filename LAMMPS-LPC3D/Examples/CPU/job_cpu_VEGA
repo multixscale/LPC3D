@@ -1,0 +1,38 @@
+#!/bin/bash
+#SBATCH --job-name=lmp_cpu_intel
+#SBATCH --output=lmp_cpu_intel.out
+#SBATCH --error=lmp_cpu_intel.err
+#SBATCH --time=34:00:00
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=34
+#SBATCH --cpus-per-task=1
+
+module purge
+module load intel-compilers/2022.2.1
+module load impi/2021.7.1-intel-compilers-2022.2.1
+module load Python/3.10.8-GCCcore-12.2.0
+
+export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" \
+    | tr ':' '\n' \
+    | grep -v 'OpenSSL/1.1/lib' \
+    | paste -sd ':' -)
+
+echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+
+export OMP_NUM_THREADS=1
+export I_MPI_FABRICS=shm:ofi
+export I_MPI_HYDRA_BOOTSTRAP=ssh
+
+
+source ~/env_lpc3d_lammps_cpu/bin/activate
+
+cd /ceph/hpc/home/euhassanl/eau_cpu/4
+
+if [ "$(head -n 1 lattice_gas.inpt | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" != "cpu" ]; then
+    echo "Error: first line of lattice_gas.inpt must be 'cpu'" >&2
+    exit 1
+fi
+
+
+mpirun -np $SLURM_NTASKS python3 LAMMPS-LPC3D.py -i lattice_gas.inpt
