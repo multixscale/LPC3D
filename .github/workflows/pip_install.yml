@@ -1,0 +1,131 @@
+# documentation: https://help.github.com/en/articles/workflow-syntax-for-github-actions
+name: Test installation of LPC3D with 'pip install'
+on: [push, pull_request, workflow_dispatch]
+permissions: read-all
+jobs:
+  test_pip_install:
+    # ubuntu <= 20.04 is required for python 3.6
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # We can test against multiple combinations of versions.
+          # We currently include one set of versions for all dependencies, based on the 2023b toolchain
+          # See https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/running-variations-of-jobs-in-a-workflow
+          # on how to use matrix: and include:
+          - pystencil-version: '1.3.4-gfbf-2023b'
+            python-version: '3.11.5-GCCcore-13.2.0'
+            matplotlib-version: '3.8.2-gfbf-2023b'
+            ipython-version: '8.17.2-GCCcore-13.2.0'
+            scipy-bundle-version: '2023.11-gfbf-2023b'  # for numpy
+            # There is no numba in 2023b... we should include this eventually
+            # For now, the pip install will just pull it in as dependency
+            # numba-version: ''
+    steps:
+        - name: Check out repository
+          uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+          with:
+            persist-credentials: false
+            path: LPC3D
+
+        - name: Setup EESSI
+          uses: eessi/github-action-eessi@v3
+          with:
+            eessi_stack_version: "2023.06"
+
+        - name: build LPC3D distribution
+          # This will test if we can create a distribution tarball/wheel/etc
+          # Could be used to e.g. put the package on pipy
+          # See https://setuptools.pypa.io/en/latest/userguide/quickstart.html
+          run: |
+            # Load Python to make it available as dependency
+            module load Python/${{ matrix.python-version }}
+
+            # Create virtualenv for this step
+            python -m venv build_dist_env
+            source build_dist_env/bin/activate
+
+            # Install build
+            pip install --upgrade build
+
+            # Change dir to repo
+            cd LPC3D
+
+            # Build the source distribution
+            python -m build
+
+            # Deactivate the virtualenv
+            deactivate
+
+        - name: LPC3D against EESSI deps from distribution tarball
+          # This will test if we can pip install from the distribution tarball we just made
+          run: |
+            # Load pystencils to make it available as dependency
+            module load pystencils/${{ matrix.pystencil-version }}
+            module load matplotlib/${{ matrix.matplotlib-version }}
+            module load IPython/${{ matrix.ipython-version }}
+            module load SciPy-bundle/${{ matrix.scipy-bundle-version }}
+
+            # Create virtualenv for this step
+            python -m venv install_from_dist_env
+            source install_from_dist_env/bin/activate
+
+            # Change dir to repo
+            cd LPC3D
+
+            # Install from distribution tarball
+            python -m pip install dist/lpc3d*.tar.gz
+
+
+            # Check if the program runs
+            lpc3d --help
+
+            # Deactivate virtualenv
+            deactivate
+
+        - name: LPC3D against EESSI deps with pip install .
+          run: |
+            # Load pystencils to make it available as dependency
+            module load pystencils/${{ matrix.pystencil-version }}
+            module load matplotlib/${{ matrix.matplotlib-version }}
+            module load IPython/${{ matrix.ipython-version }}
+            module load SciPy-bundle/${{ matrix.scipy-bundle-version }}
+
+            # Create virtualenv for this step
+            python -m venv install_from_clone
+            source install_from_clone/bin/activate
+
+            # Change dir to repo
+            cd LPC3D
+
+            # Install from clone
+            pip install .
+
+            # Check if program runs
+            lpc3d --help
+
+            # Deactivate virtualenv
+            deactivate
+
+        - name: LPC3D against EESSI deps with pip install git+https
+          run: |
+            # Load pystencils to make it available as dependency
+            module load pystencils/${{ matrix.pystencil-version }}
+            module load matplotlib/${{ matrix.matplotlib-version }}
+            module load IPython/${{ matrix.ipython-version }}
+            module load SciPy-bundle/${{ matrix.scipy-bundle-version }}
+
+            # Create virtualenv for this step
+            python -m venv install_from_git
+            source install_from_git/bin/activate
+
+            # Install from clone
+            pip install "git+$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git@$GITHUB_SHA"
+
+            # Check if program runs
+            lpc3d --help
+
+            # Deactivate virtualenv
+            deactivate
+
