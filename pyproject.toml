@@ -23,6 +23,7 @@ dependencies = [
     'ipython',
     'matplotlib',
     'pyevtk',
+    'numpy'
 ]
 
 [project.scripts]
