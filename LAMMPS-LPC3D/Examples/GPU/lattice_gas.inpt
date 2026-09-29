@@ -1,0 +1,44 @@
+gpu
+50 50 150
+true true true
+1.0  
+5e-6
+1
+298
+282
+1000
+0.0
+1
+500
+porouscarbon
+psd.txt
+3
+
+electrode
+1
+1 50
+1 50
+1 50
+pore_freq_1Vneg.txt
+
+bulk
+1 50
+1 50
+51 100
+0.05
+0.0
+
+electrode
+1
+1 50
+1 50
+101 150
+pore_freq_1Vpos.txt
+
+H2O.zmat  10000
+H2O.zmat  10000
+H2O.zmat  30000
+1
+npt_in.lmp
+nvt_in.lmp
+
