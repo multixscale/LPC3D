@@ -69,9 +69,10 @@ from pystencils.session import *
 import math
 import time
 import sys
-from numba import jit, set_num_threads, prange
+from numba import njit, set_num_threads, prange, get_num_threads
 import os
 import argparse
+import resource
 
 verif=1
 
@@ -95,11 +96,11 @@ def propagation(steps):
             dh.swap(Vmoy.name, Vmoy_next.name)
 
             dh.run_kernel(kernel1)
-            x_arrays[ReG.name]=xp.nan_to_num(x_arrays[ReG.name], nan=0.0)
-            x_arrays[ImG.name]=xp.nan_to_num(x_arrays[ImG.name], nan=0.0)
+            xp.nan_to_num(x_arrays[ReG.name], nan=0.0, copy=False)
+            xp.nan_to_num(x_arrays[ImG.name], nan=0.0, copy=False)
             dh.run_kernel(kernel2)
             dh.run_kernel(kernel3)
-            x_arrays[probv0.name]=xp.nan_to_num(x_arrays[probv0.name], nan=0.0)
+            xp.nan_to_num(x_arrays[probv0.name], nan=0.0, copy=False)
             dh.run_kernel(kernel4)
             # -------- this loop calculate quantities for each block-------
             for nb in range(1, nblocks+1):
@@ -318,7 +319,7 @@ def main():
         "c": 1, "c_next": 1,
         "e": 1,
         "latvacf": 3, "latvacf_next": 3,
-        "latvacf_op": 3, "latvacf_next_op": 3,
+        "latvacf_op": 3,
         "Vmoy": 3, "Vmoy_next": 3,
         "probv0": 3, "probv0_next": 3,
         "locpfunc": 1, "locpfunc_next": 1,
@@ -326,8 +327,8 @@ def main():
         "wij": 1,
         "ReG": 1, "ReG_next": 1,
         "ImG": 1, "ImG_next": 1,
-        "ReGs": 1, "ReGs_next": 1,
-        "ImGs": 1, "ImGs_next": 1,
+        "ReGs": 1,
+        "ImGs": 1,
     }
 
     for field_name, values_per_cell in fields_to_create.items():  #fill fields with 0.0 
@@ -335,7 +336,7 @@ def main():
             globals()[field_name] = dh.add_array(field_name, values_per_cell=values_per_cell, dtype=xp.float32, cpu=cpu, gpu=gpu)
             dh.fill(globals()[field_name].name, 0.0, ghost_layers=True)
         if user_choice == 'gpu':
-            globals()[field_name] = dh.add_array(field_name, values_per_cell=values_per_cell)
+            globals()[field_name] = dh.add_array(field_name, values_per_cell=values_per_cell, dtype=xp.float32)
 
 
     #------- creats arrays------------
@@ -550,29 +551,51 @@ def main():
     sync6 = dh.synchronization_function([Lattice.name])
 
     #------------------Numba_CPU_parallel function to fill 3D arrays: densities, Energies, frequencies------------------
-    @jit(parallel=True, fastmath=True)
-    def process_data(xmin,xmax,ymin,ymax,zmin,zmax, c,w,shift,density,density_size):
-        for i in prange(xmin, xmax+1):
-            for j in prange(ymin, ymax+1):
-                for k in prange(zmin, zmax+1):
-                    differences = np.abs(c[i,j,k] - density_size)
-                    sorted_indices = np.argsort(differences)
-                    
-                    for idx in sorted_indices:
-                        min_density = density[idx]
-                        min_shift = shift[idx]
-                        if min_density >= 2.4e-4:
-                            c[i, j, k] = min_density
-                            w[i, j, k] = min_shift * larmorfreq * 2.0 * math.pi
-                            break
+    @njit(parallel=True, fastmath=True)
+    def process_data(xmin, xmax, ymin, ymax, zmin, zmax,
+                    c, w, shift, density, density_size):
+        n = density_size.shape[0]
+        
+        for i in prange(xmin, xmax + 1):
+            for j in range(ymin, ymax + 1):
+                for k in range(zmin, zmax + 1):
+                    val = c[i, j, k]
+
+                    best_idx = -1
+                    best_diff = 1.0e308 
+
+                    fallback_idx = 0
+                    max_diff = -1.0
+
+                    for idx in range(n):
+                        d = val - density_size[idx]
+                        if d < 0.0:
+                            d = -d  
+
+                        if d > max_diff:
+                            max_diff = d
+                            fallback_idx = idx
+
+                        if density[idx] >= 2.4e-4 and d < best_diff:
+                            best_diff = d
+                            best_idx = idx
+
+                    if best_idx != -1:
+                        chosen = best_idx
                     else:
-                        c[i, j, k] = density[sorted_indices[-1]]
-                        w[i, j, k] = shift[sorted_indices[-1]]
+                        chosen = fallback_idx
+
+                    dens = density[chosen]
+                    sh   = shift[chosen]
+
+                    c[i, j, k] = dens
+                    w[i, j, k] = sh * larmorfreq * 2.0 * math.pi
                 
 
     num_threads_str = os.getenv('OMP_NUM_THREADS', '1')
     num_threads = int(num_threads_str)
     set_num_threads(num_threads)
+    print("Numba utilisera", get_num_threads(), "threads")
 
     #--------------------- fill quantities in arrays and fields------------------------------------	
     for nb in range(1,nblocks+1):
@@ -592,13 +615,17 @@ def main():
 
             if user_choice == 'cpu':   
                 x_arrays[c.name][xmin[nb]:xmax[nb]+1,ymin[nb]:ymax[nb]+1,zmin[nb]:zmax[nb]+1] = np.random.choice(size_pores, size=(k1,k2,k3), p=probability)
+                t_numba1 = time.time()
                 process_data(xmin[nb],xmax[nb],ymin[nb],ymax[nb],zmin[nb],zmax[nb],x_arrays[c.name],x_arrays[wij.name],shift,density,density_size)
+                t_numba2 = time.time()
+                print("Numba time:", t_numba2 - t_numba1, "s")
             
             if user_choice == 'gpu':
                 dcpu.cpu_arrays[c_cpu.name][xmin[nb]:xmax[nb]+1,ymin[nb]:ymax[nb]+1,zmin[nb]:zmax[nb]+1] = np.random.choice(size_pores, size=(k1,k2,k3), p=probability)
                 process_data(xmin[nb],xmax[nb],ymin[nb],ymax[nb],zmin[nb],zmax[nb],dcpu.cpu_arrays[c_cpu.name], dcpu.cpu_arrays[wij_cpu.name],shift,density,density_size)
-                x_arrays[c.name]=cp.array(dcpu.cpu_arrays[c_cpu.name])
-                x_arrays[wij.name]=cp.array(dcpu.cpu_arrays[wij_cpu.name])
+                cp.copyto(x_arrays[c.name],   cp.asarray(dcpu.cpu_arrays[c_cpu.name]))
+                cp.copyto(x_arrays[wij.name], cp.asarray(dcpu.cpu_arrays[wij_cpu.name]))
+
 
             
     
@@ -774,7 +801,7 @@ def main():
     ast1 = ps.create_kernel(ur1, config=config)
     kernel1 = ast1.compile()
     dh.run_kernel(kernel1)
-    x_arrays[probv0.name]=xp.nan_to_num(x_arrays[probv0.name], nan=0.0)
+    x_arrays[probv0.name]=xp.nan_to_num(x_arrays[probv0.name], nan=0.0, copy=False)
 
     ast2 = ps.create_kernel(ur2, config=config)
     kernel2 = ast2.compile()
@@ -801,8 +828,8 @@ def main():
         yvacf[nb] = yvacfx[nb] + yvacfy[nb] + yvacfz[nb]
 
         zvacfx[nb]=xp.sum(x_arrays[latvacf_op.name][xmin[nb]+2:xmax[nb]+1-2,ymin[nb]+2:ymax[nb]+1-2,zmin[nb]+2:zmax[nb]+1-2,0], axis=(0,1))
-        zvacfy[nb]=xp.sum(x_arrays[latvacf_op.name][xmin[nb]+2:xmax[nb]+1-2,ymin[nb]+2:ymax[nb]+1-2,zmin[nb]+2:zmax[nb]+1-2,0], axis=(0,1))
-        zvacfz[nb]=xp.sum(x_arrays[latvacf_op.name][xmin[nb]+2:xmax[nb]+1-2,ymin[nb]+2:ymax[nb]+1-2,zmin[nb]+2:zmax[nb]+1-2,0], axis=(0,1))
+        zvacfy[nb]=xp.sum(x_arrays[latvacf_op.name][xmin[nb]+2:xmax[nb]+1-2,ymin[nb]+2:ymax[nb]+1-2,zmin[nb]+2:zmax[nb]+1-2,1], axis=(0,1))
+        zvacfz[nb]=xp.sum(x_arrays[latvacf_op.name][xmin[nb]+2:xmax[nb]+1-2,ymin[nb]+2:ymax[nb]+1-2,zmin[nb]+2:zmax[nb]+1-2,2], axis=(0,1))
 
         zvacf[nb] = zvacfx[nb] + zvacfy[nb] + zvacfz[nb]
 
@@ -920,8 +947,10 @@ def main():
         display_interval = 100
     else:
         display_interval = 1000 
-        
+    t_0prop=time.time()    
     propagation(steps)
+    t_1prop=time.time()
+    print("temp propgt", t_1prop - t_0prop, "s")
 
 
     #-----------------run fourrier transform and writing quantities in out files for each block----------------
@@ -951,6 +980,17 @@ def main():
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"The execution time is {elapsed_time:.2f} seconds.")
+    # === mesure mémoire à la fin ===
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    max_rss_kb = usage.ru_maxrss          # en Ko sur Linux
+    max_rss_mb = max_rss_kb / 1024.0
+    max_rss_gb = max_rss_mb / 1024.0
+
+    with open("memory_usage.txt", "w") as f:
+        f.write("Memory usage (ru_maxrss):\n")
+        f.write(f"  {max_rss_kb:.0f} Ko\n")
+        f.write(f"  {max_rss_mb:.2f} Mo\n")
+        f.write(f"  {max_rss_gb:.4f} Go\n")
     exit()
 
 
