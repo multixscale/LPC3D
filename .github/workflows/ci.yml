@@ -29,7 +29,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pystencils numba ipython matplotlib pyevtk
+          # LPC3D uses pystencils.session, removed in pystencils 2.x
+          pip install "pystencils<2" numba ipython matplotlib pyevtk
           pip freeze > pip-freeze.txt
 
       - name: Prepare run directory
@@ -45,7 +46,9 @@ jobs:
         env:
           OMP_NUM_THREADS: "2"
           NUMBA_NUM_THREADS: "2"
-        run: python3 ../LPC3D.py -i lattice_gas.inpt | tee log.lpc3d
+        run: |
+          set -o pipefail
+          python3 ../LPC3D.py -i lattice_gas.inpt | tee log.lpc3d
 
       - name: Check outputs
         run: |
