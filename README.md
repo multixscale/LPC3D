@@ -10,6 +10,10 @@ Here, a manual and example input files are provided.
 
 Compared to the previous version of the program, written in C and serial (https://github.com/cmerlet/LPC3D-C-serial), this code is written using pystencils (https://pypi.org/project/pystencils/), is parallel and can use CPU and GPU.
 
+## Digital Object Identifier
+
+[![DOI](https://zenodo.org/badge/874849046.svg)](https://doi.org/10.5281/zenodo.23565846)
+
 ## Continuous integration
 
 ![CI](https://github.com/multixscale/LPC3D/actions/workflows/ci.yml/badge.svg)
