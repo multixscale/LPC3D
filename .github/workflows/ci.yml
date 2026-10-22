@@ -55,6 +55,9 @@ jobs:
           if [ "${{ matrix.case }}" = "supercapacitor" ]; then NB=3; else NB=1; fi
           python3 tests/ci/check_outputs.py run $NB
 
+      - name: Regression test against reference results
+        run: python3 tests/ci/compare_reference.py run tests/ci/reference/${{ matrix.case }}
+
       - name: Upload outputs and environment
         if: always()
         uses: actions/upload-artifact@v4
