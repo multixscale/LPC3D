@@ -10,6 +10,10 @@ Here, a manual and example input files are provided.
 
 Compared to the previous version of the program, written in C and serial (https://github.com/cmerlet/LPC3D-C-serial), this code is written using pystencils (https://pypi.org/project/pystencils/), is parallel and can use CPU and GPU.
 
+## Continuous integration
+
+![CI](https://github.com/multixscale/LPC3D/actions/workflows/ci.yml/badge.svg)
+
 ## Multiscale coupling with LAMMPS
 
 The `LAMMPS-LPC3D/` folder contains a coupled version of the code, in which LPC3D drives an ensemble of independent LAMMPS simulations, one for each pore size. The pore-resolved densities obtained from molecular dynamics are transferred on the fly to the lattice gas model. The coupling is implemented in Python with mpi4py and the LAMMPS Python interface, and can be run on CPU or GPU (LAMMPS with Kokkos). Examples for both modes are provided in `LAMMPS-LPC3D/Examples/`, and the installation, input format and usage are described in the manual.

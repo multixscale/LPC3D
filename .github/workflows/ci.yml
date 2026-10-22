@@ -1,0 +1,65 @@
+name: LPC3D CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lpc3d-cpu:
+    name: LPC3D (CPU) - ${{ matrix.case }} - Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+        case:
+          - bulk
+          - supercapacitor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # LPC3D uses pystencils.session, removed in pystencils 2.x
+          pip install "pystencils<2" numba ipython matplotlib pyevtk
+          pip freeze > pip-freeze.txt
+
+      - name: Prepare run directory
+        run: |
+          mkdir -p run
+          cp tests/ci/${{ matrix.case }}/lattice_gas.inpt run/
+          if [ "${{ matrix.case }}" = "supercapacitor" ]; then
+            cp examples/short-test/psd.txt examples/short-test/pore_dens_freq_2neg.txt run/
+          fi
+
+      - name: Run LPC3D
+        working-directory: run
+        env:
+          OMP_NUM_THREADS: "2"
+          NUMBA_NUM_THREADS: "2"
+        run: |
+          set -o pipefail
+          python3 ../LPC3D.py -i lattice_gas.inpt | tee log.lpc3d
+
+      - name: Check outputs
+        run: |
+          if [ "${{ matrix.case }}" = "supercapacitor" ]; then NB=3; else NB=1; fi
+          python3 tests/ci/check_outputs.py run $NB
+
+      - name: Upload outputs and environment
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lpc3d-${{ matrix.case }}-py${{ matrix.python-version }}
+          path: |
+            run/
+            pip-freeze.txt

@@ -1,0 +1,37 @@
+cpu
+10 10 30
+true true false
+1.0
+5e-6
+1
+298
+282
+100
+0.0
+0
+porous_carbon
+3
+
+electrode
+1
+1 10
+1 10
+1 10
+psd.txt
+pore_dens_freq_2neg.txt
+
+bulk
+1 10
+1 10
+11 20
+0.296297
+0.000
+
+electrode
+1
+1 10
+1 10
+21 30
+psd.txt
+pore_dens_freq_2neg.txt
+
