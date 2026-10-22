@@ -1,0 +1,334 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 927349d..6bf46f0 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -63,3 +63,63 @@ jobs:
+           path: |
+             run/
+             pip-freeze.txt
++
++  lammps-lpc3d-cpu:
++    # Workflow test of the LAMMPS-LPC3D coupling on a reduced system:
++    # 2 pore sizes, 10% of the molecules, 100 NPT + 200 NVT steps, 4 MPI ranks.
++    # The densities are not physically meaningful; the test checks that the
++    # calls (fftool, packmol, LAMMPS, centre of mass, LPC3D) and the MPI
++    # workflow run end to end.
++    name: LAMMPS-LPC3D coupling (CPU, MPI)
++    runs-on: ubuntu-latest
++    timeout-minutes: 45
++    defaults:
++      run:
++        shell: bash -el {0}
++
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Set up conda environment (LAMMPS, mpi4py, packmol)
++        uses: mamba-org/setup-micromamba@v2
++        with:
++          environment-file: tests/ci/coupling/environment.yml
++          cache-environment: true
++
++      - name: Check LAMMPS installation
++        run: |
++          python -c "from lammps import lammps; l = lammps(cmdargs=['-log', 'none']); print('LAMMPS', l.version(), 'MPI:', l.has_mpi_support); missing = {'MOLECULE', 'KSPACE', 'RIGID'} - set(l.installed_packages); assert not missing, f'missing LAMMPS packages: {missing}'"
++          micromamba env export > conda-env.yml
++
++      - name: Prepare reduced coupled run
++        run: bash tests/ci/coupling/prepare.sh run
++
++      - name: Run LAMMPS-LPC3D
++        working-directory: run
++        env:
++          OMP_NUM_THREADS: "1"
++        run: |
++          set -o pipefail
++          mpirun --oversubscribe -np 4 python3 LAMMPS-LPC3D.py -i lattice_gas.inpt 2>&1 | tee log.lpc3d
++
++      - name: Check LAMMPS side of the coupling
++        run: python3 tests/ci/coupling/check_coupling.py run
++
++      - name: Check LPC3D outputs
++        run: python3 tests/ci/check_outputs.py run 3
++
++      - name: Upload outputs and environment
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: lammps-lpc3d-cpu
++          path: |
++            run/log.lpc3d
++            run/all_densities.dat
++            run/*.txt
++            run/*.dat
++            run/simulation_*/log.lammps
++            run/simulation_*/packmol.log
++            run/simulation_*/fftool.log*
++            run/simulation_*/NVT/log.lammps
++            conda-env.yml
+diff --git a/LAMMPS-LPC3D/LAMMPS-LPC3D.py b/LAMMPS-LPC3D/LAMMPS-LPC3D.py
+index 562a0a0..17f0a6c 100644
+--- a/LAMMPS-LPC3D/LAMMPS-LPC3D.py
++++ b/LAMMPS-LPC3D/LAMMPS-LPC3D.py
+@@ -478,7 +478,9 @@ def main():
+             minvalue = np.min(NMR_spec)
+             NMR_spec -= minvalue
+ 
+-            save = np.trapz(NMR_spec, NMR_freq)
++            # np.trapz was renamed np.trapezoid in NumPy 2.0 and later removed
++            trapezoid = getattr(np, "trapezoid", None) or np.trapz
++            save = trapezoid(NMR_spec, NMR_freq)
+ 
+             name = f"Normalised_spectrum-{nsample}-bloc-{nb}.dat"
+             with open(name, "w") as outFT:
+diff --git a/tests/ci/coupling/check_coupling.py b/tests/ci/coupling/check_coupling.py
+new file mode 100644
+index 0000000..ef45705
+--- /dev/null
++++ b/tests/ci/coupling/check_coupling.py
+@@ -0,0 +1,67 @@
++"""Check the LAMMPS side of a reduced LAMMPS-LPC3D run.
++
++For every pore size in psd.txt, checks that the LAMMPS simulations ran
++(NPT and NVT logs completed, centre-of-mass file written), and that the
++densities passed back to LPC3D (all_densities.dat) are finite, non-negative
++and not all zero.
++
++Usage: python3 check_coupling.py <run_directory>
++"""
++import sys
++from pathlib import Path
++
++import numpy as np
++
++
++def main():
++    run_dir = Path(sys.argv[1])
++    errors = []
++
++    pore_sizes = np.unique(np.loadtxt(run_dir / "psd.txt", usecols=0, ndmin=1))
++
++    for p in pore_sizes:
++        sim = run_dir / f"simulation_{p:g}"
++        if not sim.is_dir():
++            # the folder name follows Python's str() of the pore size
++            sim = run_dir / f"simulation_{float(p)}"
++        if not sim.is_dir():
++            errors.append(f"missing simulation folder for pore size {p:g}")
++            continue
++        for log in (sim / "log.lammps", sim / "NVT" / "log.lammps"):
++            if not log.is_file() or "Total wall time" not in log.read_text():
++                errors.append(f"LAMMPS run did not complete: {log.relative_to(run_dir)}")
++        cm = sim / "NVT" / "CM_positions.xyz"
++        if not cm.is_file() or cm.stat().st_size == 0:
++            errors.append(f"missing or empty: {cm.relative_to(run_dir)}")
++
++    dens_file = run_dir / "all_densities.dat"
++    if not dens_file.is_file():
++        errors.append("missing: all_densities.dat")
++    else:
++        dens = np.loadtxt(dens_file, ndmin=2)
++        if dens.shape[0] != len(pore_sizes):
++            errors.append(
++                f"all_densities.dat has {dens.shape[0]} rows, expected {len(pore_sizes)}"
++            )
++        values = dens[:, 1:]
++        if not np.all(np.isfinite(values)):
++            errors.append("NaN or Inf in all_densities.dat")
++        elif np.any(values < 0):
++            errors.append("negative density in all_densities.dat")
++        elif not np.any(values > 0):
++            errors.append("all densities are zero in all_densities.dat")
++
++    log = run_dir / "log.lpc3d"
++    if log.is_file() and "still not equilibrated" in log.read_text():
++        errors.append("LPC3D reported that the system is not equilibrated")
++
++    if errors:
++        print("Coupling check FAILED:")
++        for e in errors:
++            print("  -", e)
++        sys.exit(1)
++    print(f"Coupling check passed for {len(pore_sizes)} pore size(s) in {run_dir}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/ci/coupling/environment.yml b/tests/ci/coupling/environment.yml
+new file mode 100644
+index 0000000..1e2a094
+--- /dev/null
++++ b/tests/ci/coupling/environment.yml
+@@ -0,0 +1,21 @@
++# Environment for the LAMMPS-LPC3D CI test (CPU only).
++# LAMMPS, mpi4py and packmol come from conda-forge so that LAMMPS and mpi4py
++# are built against the same MPI library (OpenMPI).
++name: lpc3d-lammps
++channels:
++  - conda-forge
++dependencies:
++  - python=3.12
++  - lammps=2025.07.22=*openmpi*
++  - openmpi
++  - mpi4py
++  - packmol
++  - numpy
++  - pip
++  - pip:
++      # LPC3D uses pystencils.session, removed in pystencils 2.x
++      - pystencils<2
++      - numba
++      - ipython
++      - matplotlib
++      - pyevtk
+diff --git a/tests/ci/coupling/lattice_gas.inpt b/tests/ci/coupling/lattice_gas.inpt
+new file mode 100644
+index 0000000..2e8a465
+--- /dev/null
++++ b/tests/ci/coupling/lattice_gas.inpt
+@@ -0,0 +1,43 @@
++cpu
++10 10 30
++true true true
++1.0
++5e-6
++1
++298
++282
++100
++0.0
++0
++porouscarbon
++psd.txt
++3
++
++electrode
++1
++1 10
++1 10
++1 10
++pore_freq_neg.txt
++
++bulk
++1 10
++1 10
++11 20
++0.05
++0.0
++
++electrode
++1
++1 10
++1 10
++21 30
++pore_freq_pos.txt
++
++H2O.zmat  1000
++H2O.zmat  1000
++H2O.zmat  3000
++1
++npt_in.lmp
++nvt_in.lmp
++
+diff --git a/tests/ci/coupling/pore_freq_neg.txt b/tests/ci/coupling/pore_freq_neg.txt
+new file mode 100644
+index 0000000..dd39885
+--- /dev/null
++++ b/tests/ci/coupling/pore_freq_neg.txt
+@@ -0,0 +1,2 @@
++20.0   0.0 0.0 0.0
++26.0   0.0 0.0 0.0
+diff --git a/tests/ci/coupling/pore_freq_pos.txt b/tests/ci/coupling/pore_freq_pos.txt
+new file mode 100644
+index 0000000..dd39885
+--- /dev/null
++++ b/tests/ci/coupling/pore_freq_pos.txt
+@@ -0,0 +1,2 @@
++20.0   0.0 0.0 0.0
++26.0   0.0 0.0 0.0
+diff --git a/tests/ci/coupling/prepare.sh b/tests/ci/coupling/prepare.sh
+new file mode 100644
+index 0000000..a0de3ec
+--- /dev/null
++++ b/tests/ci/coupling/prepare.sh
+@@ -0,0 +1,41 @@
++#!/usr/bin/env bash
++# Prepare a reduced LAMMPS-LPC3D run for CI.
++# Usage: tests/ci/coupling/prepare.sh <run_directory>
++#
++# The code and molecular files are taken from LAMMPS-LPC3D/ so the test always
++# follows the real workflow. Only the size of the problem is reduced:
++#   - 2 pore sizes (psd.txt), so 2 LAMMPS simulations
++#   - 5000 water molecules instead of 50000 (lattice_gas.inpt, sites2cm.inpt)
++#   - 100 NPT steps and 200 NVT steps instead of 10000 and 100000
++#   - 10x10x30 lattice, no equilibration
++set -euo pipefail
++
++REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
++SRC="$REPO/LAMMPS-LPC3D"
++CI="$REPO/tests/ci/coupling"
++RUN="$1"
++
++mkdir -p "$RUN"
++
++for f in LAMMPS-LPC3D.py mpi4py_lammps.py fftool il.ff H2O.zmat CG1.xyz CG2.xyz \
++         npt_in.lmp nvt_in.lmp; do
++    cp "$SRC/$f" "$RUN/"
++done
++for f in lattice_gas.inpt psd.txt pore_freq_neg.txt pore_freq_pos.txt sites2cm.inpt; do
++    cp "$CI/$f" "$RUN/"
++done
++
++# The workflow calls ./packmol in each simulation folder
++cp "$(command -v packmol)" "$RUN/packmol"
++chmod +x "$RUN/fftool" "$RUN/packmol"
++
++# Shorten the MD runs, and fail loudly if the scripts change
++shorten() {
++    local file="$1" old="$2" new="$3"
++    grep -q "^run $old\$" "$RUN/$file" || { echo "Expected 'run $old' in $file" >&2; exit 1; }
++    sed -i "s/^run $old\$/run $new/" "$RUN/$file"
++}
++shorten npt_in.lmp 10000 100
++shorten nvt_in.lmp 100000 200
++
++echo "Reduced coupled test prepared in $RUN"
+diff --git a/tests/ci/coupling/psd.txt b/tests/ci/coupling/psd.txt
+new file mode 100644
+index 0000000..a587a82
+--- /dev/null
++++ b/tests/ci/coupling/psd.txt
+@@ -0,0 +1,2 @@
++20.0   0.5
++26.0   0.5
+diff --git a/tests/ci/coupling/sites2cm.inpt b/tests/ci/coupling/sites2cm.inpt
+new file mode 100644
+index 0000000..6b65813
+--- /dev/null
++++ b/tests/ci/coupling/sites2cm.inpt
+@@ -0,0 +1,25 @@
++2
++2
++5
++3
++3
++1000
++12.01
++1.01
++1.01
++3
++1000
++12.01
++1.01
++1.01
++3
++3000
++12.01
++1.01
++1.01
++1
++776
++12.01
++1
++776
++12.01

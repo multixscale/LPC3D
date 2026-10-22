@@ -63,3 +63,63 @@ jobs:
           path: |
             run/
             pip-freeze.txt
+
+  lammps-lpc3d-cpu:
+    # Workflow test of the LAMMPS-LPC3D coupling on a reduced system:
+    # 2 pore sizes, 10% of the molecules, 100 NPT + 200 NVT steps, 4 MPI ranks.
+    # The densities are not physically meaningful; the test checks that the
+    # calls (fftool, packmol, LAMMPS, centre of mass, LPC3D) and the MPI
+    # workflow run end to end.
+    name: LAMMPS-LPC3D coupling (CPU, MPI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up conda environment (LAMMPS, mpi4py, packmol)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: tests/ci/coupling/environment.yml
+          cache-environment: true
+
+      - name: Check LAMMPS installation
+        run: |
+          python -c "from lammps import lammps; l = lammps(cmdargs=['-log', 'none']); print('LAMMPS', l.version(), 'MPI:', l.has_mpi_support); missing = {'MOLECULE', 'KSPACE', 'RIGID'} - set(l.installed_packages); assert not missing, f'missing LAMMPS packages: {missing}'"
+          micromamba env export > conda-env.yml
+
+      - name: Prepare reduced coupled run
+        run: bash tests/ci/coupling/prepare.sh run
+
+      - name: Run LAMMPS-LPC3D
+        working-directory: run
+        env:
+          OMP_NUM_THREADS: "1"
+        run: |
+          set -o pipefail
+          mpirun --oversubscribe -np 4 python3 LAMMPS-LPC3D.py -i lattice_gas.inpt 2>&1 | tee log.lpc3d
+
+      - name: Check LAMMPS side of the coupling
+        run: python3 tests/ci/coupling/check_coupling.py run
+
+      - name: Check LPC3D outputs
+        run: python3 tests/ci/check_outputs.py run 3
+
+      - name: Upload outputs and environment
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lammps-lpc3d-cpu
+          path: |
+            run/log.lpc3d
+            run/all_densities.dat
+            run/*.txt
+            run/*.dat
+            run/simulation_*/log.lammps
+            run/simulation_*/packmol.log
+            run/simulation_*/fftool.log*
+            run/simulation_*/NVT/log.lammps
+            conda-env.yml

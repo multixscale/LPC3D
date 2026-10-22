@@ -478,7 +478,9 @@ def main():
             minvalue = np.min(NMR_spec)
             NMR_spec -= minvalue
 
-            save = np.trapz(NMR_spec, NMR_freq)
+            # np.trapz was renamed np.trapezoid in NumPy 2.0 and later removed
+            trapezoid = getattr(np, "trapezoid", None) or np.trapz
+            save = trapezoid(NMR_spec, NMR_freq)
 
             name = f"Normalised_spectrum-{nsample}-bloc-{nb}.dat"
             with open(name, "w") as outFT:

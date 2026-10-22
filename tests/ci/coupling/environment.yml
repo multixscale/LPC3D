@@ -1,0 +1,21 @@
+# Environment for the LAMMPS-LPC3D CI test (CPU only).
+# LAMMPS, mpi4py and packmol come from conda-forge so that LAMMPS and mpi4py
+# are built against the same MPI library (OpenMPI).
+name: lpc3d-lammps
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - lammps=2025.07.22=*openmpi*
+  - openmpi
+  - mpi4py
+  - packmol
+  - numpy
+  - pip
+  - pip:
+      # LPC3D uses pystencils.session, removed in pystencils 2.x
+      - pystencils<2
+      - numba
+      - ipython
+      - matplotlib
+      - pyevtk

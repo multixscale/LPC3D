@@ -1,0 +1,40 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 79f7dc3..927349d 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -29,7 +29,8 @@ jobs:
+       - name: Install dependencies
+         run: |
+           python -m pip install --upgrade pip
+-          pip install pystencils numba ipython matplotlib pyevtk
++          # LPC3D uses pystencils.session, removed in pystencils 2.x
++          pip install "pystencils<2" numba ipython matplotlib pyevtk
+           pip freeze > pip-freeze.txt
+ 
+       - name: Prepare run directory
+@@ -45,7 +46,9 @@ jobs:
+         env:
+           OMP_NUM_THREADS: "2"
+           NUMBA_NUM_THREADS: "2"
+-        run: python3 ../LPC3D.py -i lattice_gas.inpt | tee log.lpc3d
++        run: |
++          set -o pipefail
++          python3 ../LPC3D.py -i lattice_gas.inpt | tee log.lpc3d
+ 
+       - name: Check outputs
+         run: |
+diff --git a/LPC3D.py b/LPC3D.py
+index ac43f4d..e0cc7ab 100644
+--- a/LPC3D.py
++++ b/LPC3D.py
+@@ -492,7 +492,9 @@ def main():
+         minvalue = np.min(NMR_spec)
+         NMR_spec -= minvalue
+ 
+-        save = np.trapz(NMR_spec, NMR_freq)
++        # np.trapz was renamed np.trapezoid in NumPy 2.0 and later removed
++        trapezoid = getattr(np, "trapezoid", None) or np.trapz
++        save = trapezoid(NMR_spec, NMR_freq)
+ 
+         name = f"Normalised_spectrum-{nsample}-bloc-{nb}.dat"
+         with open(name, "w") as outFT:

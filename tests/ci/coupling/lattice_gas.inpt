@@ -1,0 +1,43 @@
+cpu
+10 10 30
+true true true
+1.0
+5e-6
+1
+298
+282
+100
+0.0
+0
+porouscarbon
+psd.txt
+3
+
+electrode
+1
+1 10
+1 10
+1 10
+pore_freq_neg.txt
+
+bulk
+1 10
+1 10
+11 20
+0.05
+0.0
+
+electrode
+1
+1 10
+1 10
+21 30
+pore_freq_pos.txt
+
+H2O.zmat  1000
+H2O.zmat  1000
+H2O.zmat  3000
+1
+npt_in.lmp
+nvt_in.lmp
+
