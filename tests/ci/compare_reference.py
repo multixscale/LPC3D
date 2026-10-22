@@ -7,9 +7,15 @@ with the same shape, and its values must agree within a tolerance:
 
 LPC3D fixes its random seed, so results are bit-for-bit identical from run
 to run and independent of the number of threads. Between different
-installations (Python/NumPy versions, CPU types) only rounding-level
-differences are expected (about 1e-10 relative in our tests), so the
-tolerance below is tight and any change in the physics will be caught.
+installations (Python/NumPy versions, CPU types) single-precision (float32)
+rounding differences remain: up to about 2e-5 relative on the NMR signal
+in our tests. RTOL leaves a margin above that while still catching
+physical changes (a 1 K change in temperature changes the diffusion
+coefficients by about 4e-4 relative).
+
+The phase column of the FT_signal files is not compared: where the
+spectrum magnitude is essentially zero, the phase is the angle of rounding
+noise and can take any value between -pi and pi.
 
 Usage: python3 compare_reference.py <run_directory> <reference_directory>
 """
@@ -18,8 +24,13 @@ from pathlib import Path
 
 import numpy as np
 
-RTOL = 1e-5
+RTOL = 1e-4
 ATOL_FACTOR = 1e-6
+
+# Columns not compared, by file name prefix (0-based column indices)
+SKIP_COLUMNS = {
+    "FT_signal-": [2],  # frequency, magnitude, PHASE, Re(FT), Im(FT)
+}
 
 
 def main():
@@ -41,6 +52,10 @@ def main():
         if new.shape != ref.shape:
             errors.append(f"{ref_path.name}: shape {new.shape}, expected {ref.shape}")
             continue
+        for prefix, cols in SKIP_COLUMNS.items():
+            if ref_path.name.startswith(prefix) and ref.ndim == 2:
+                keep = [c for c in range(ref.shape[1]) if c not in cols]
+                ref, new = ref[:, keep], new[:, keep]
         scale = np.max(np.abs(ref)) if ref.size else 0.0
         atol = ATOL_FACTOR * scale
         diff = np.abs(new - ref)
